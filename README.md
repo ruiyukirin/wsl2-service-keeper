@@ -1,5 +1,7 @@
 # WSL2 Service Keeper 🔧
 
+**English** | [中文](README_CN.md)
+
 > **Keep your WSL2 systemd services alive and auto-start them on Windows boot.**
 
 A [WorkBuddy](https://www.codebuddy.cn/) skill born from real production debugging — every pitfall documented here was hit and solved in a live environment.
@@ -69,7 +71,7 @@ Register-ScheduledTask -TaskName "WSL-AutoStart" -Principal $principal -Action $
 
 ```bash
 # Quick install
-git clone https://github.com/YOUR_USERNAME/wsl2-service-keeper.git
+git clone https://github.com/ruiyukirin/wsl2-service-keeper.git
 cp -r wsl2-service-keeper ~/.workbuddy/skills/
 ```
 
