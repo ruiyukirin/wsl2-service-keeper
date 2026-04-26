@@ -198,6 +198,75 @@ def check_scheduled_task(task_name):
                 print(f"   {line}")
 
 
+def check_virtualization():
+    """Check if Hyper-V and virtualization components are enabled."""
+    print("=" * 60)
+    print("📋 Checking Virtualization Status")
+    print("=" * 60)
+
+    issues = []
+
+    # Check hypervisorlaunchtype via bcdedit (needs admin)
+    bcdedit_out, bcdedit_code = run_cmd(
+        ["powershell.exe", "-NoProfile", "-Command",
+         "Start-Process cmd -ArgumentList '/c bcdedit /enum > $env:TEMP\\bcdedit_diag.txt 2>&1' "
+         "-Verb RunAs -Wait; Get-Content $env:TEMP\\bcdedit_diag.txt -ErrorAction SilentlyContinue"]
+    )
+    if bcdedit_out and "hypervisorlaunchtype" in bcdedit_out.lower():
+        for line in bcdedit_out.split("\n"):
+            if "hypervisorlaunchtype" in line.lower():
+                if "off" in line.lower():
+                    print(f"   ❌ hypervisorlaunchtype = Off (should be Auto)")
+                    print("   → This is usually caused by Android emulators (NoxPlayer, LDPlayer, etc.)")
+                    issues.append("hypervisorlaunchtype=Off")
+                elif "auto" in line.lower():
+                    print(f"   ✅ hypervisorlaunchtype = Auto")
+                else:
+                    print(f"   ⚠️  hypervisorlaunchtype = {line.strip()}")
+    else:
+        print("   ⚠️  Cannot read bcdedit (may need admin privileges)")
+        print("   → Try running manually: bcdedit /enum | findstr hypervisor")
+
+    # Check WSL status for virtualization errors
+    wsl_status, wsl_code = run_cmd(["wsl.exe", "--status"])
+    if wsl_status:
+        # Decode UTF-16-LE if needed
+        try:
+            if isinstance(wsl_status, bytes):
+                wsl_status = wsl_status.decode("utf-16-le", errors="replace")
+        except Exception:
+            pass
+        if "虚拟机平台" in wsl_status or "Virtual Machine Platform" in wsl_status.lower():
+            print("   ❌ VirtualMachinePlatform is NOT enabled")
+            print("   → Fix: dism /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart")
+            issues.append("VirtualMachinePlatform disabled")
+        if "Subsystem for Linux" in wsl_status:
+            print("   ❌ Microsoft-Windows-Subsystem-Linux is NOT enabled")
+            print("   → Fix: dism /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart")
+            issues.append("WSL component disabled")
+
+    # Quick test: can WSL actually run?
+    wsl_test, test_code = run_cmd(["wsl.exe", "--", "echo", "ok"])
+    if test_code != 0:
+        print("   ❌ WSL2 is NOT functional (wsl.exe returns non-zero)")
+        if not issues:
+            print("   → Unknown cause, check Windows Event Viewer for details")
+    else:
+        print("   ✅ WSL2 is functional")
+
+    if issues:
+        print()
+        print("   ⚠️  CRITICAL: Virtualization components are broken!")
+        print("   This is likely caused by an Android emulator (NoxPlayer, LDPlayer, Xiaoyao, etc.)")
+        print("   Fix all three issues and restart:")
+        print("     1. bcdedit /set hypervisorlaunchtype auto")
+        print("     2. dism /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart")
+        print("     3. dism /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart")
+        print("     4. Restart computer")
+
+    return len(issues) == 0
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Diagnose WSL2 service issues"
@@ -223,6 +292,9 @@ def main():
     print("🔍 WSL2 Service Keeper — Diagnostic Report")
     print()
 
+    # Phase 0: Virtualization check (most fundamental, do first)
+    virt_ok = check_virtualization()
+
     # Phase 1: .wslconfig check (always relevant)
     config_ok = check_wslconfig()
 
@@ -243,6 +315,9 @@ def main():
     print("=" * 60)
     print("📊 Summary")
     print("=" * 60)
+    if not virt_ok:
+        print("❌ Virtualization is BROKEN — fix this first (see Phase 1.5 in SKILL.md)")
+        print("   This is usually caused by Android emulators disabling Hyper-V")
     if config_ok:
         print("✅ .wslconfig is correctly configured")
     else:

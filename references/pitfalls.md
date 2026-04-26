@@ -215,3 +215,75 @@ exec sleep infinity
 -ExecutionTimeLimit 'PT0S'
 ```
 这是 ISO 8601 duration 格式，Task Scheduler 原生支持。
+
+---
+
+## 坑 11：安卓模拟器关闭虚拟化组件（最隐蔽）
+
+### 症状
+- 安装安卓模拟器（如夜神 NoxPlayer、雷电、逍遥等）后，WSL2 完全无法启动
+- `wsl --status` 提示"当前计算机配置不支持 WSL2"，要求启用"虚拟机平台"可选组件
+- 任务计划运行 `wsl.exe` 返回 `-1`
+- `wsl -d <distro> -- echo test` 直接返回 exit code 1
+- 重启电脑后问题依旧
+
+### 根因
+基于 VirtualBox/QEMU 的安卓模拟器（夜神、雷电、逍遥、BlueStacks 旧版等）与 Hyper-V 互斥。安装时会自动执行以下破坏性操作：
+
+| 被修改项 | 修改内容 | 影响 |
+|---|---|---|
+| `bcdedit hypervisorlaunchtype` | `Auto` → `Off` | Hyper-V 被完全禁用 |
+| `VirtualMachinePlatform` 可选组件 | 启用 → 禁用 | WSL2 依赖的虚拟机平台消失 |
+| `Microsoft-Windows-Subsystem-Linux` 可选组件 | 启用 → 禁用 | WSL1 也不可用 |
+
+**注意**：卸载模拟器时**不会自动恢复**这些设置！必须手动修复。
+
+### 解决
+
+**第一步**：卸载安卓模拟器，并清理残留目录（常见残留路径）：
+```
+D:\Program Files\Nox
+C:\Users\<username>\AppData\Local\Nox
+```
+
+**第二步**：以管理员权限执行以下三条修复命令：
+
+```powershell
+# 1. 恢复 Hyper-V 启动类型
+bcdedit /set hypervisorlaunchtype auto
+
+# 2. 重新启用虚拟机平台
+dism /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart
+
+# 3. 重新启用 WSL
+dism /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart
+```
+
+**第三步**：重启电脑。
+
+### 验证
+```powershell
+# 检查 hypervisorlaunchtype 应为 Auto
+bcdedit /enum | findstr hypervisor
+
+# 检查 WSL 状态
+wsl --status
+
+# 测试 WSL 是否可用
+wsl -d <distro> -- echo "OK"
+```
+
+### 预防
+- **不要安装基于 VirtualBox/QEMU 的安卓模拟器**（夜神、雷电、逍遥等旧版）
+- 如果必须用安卓模拟器，选择基于 Hyper-V 的版本：
+  - MuMu Pro
+  - 雷电9（Hyper-V 版）
+  - BlueStacks 5+（Hyper-V 模式）
+- 安装前备份 `bcdedit /enum` 输出，安装后对比差异
+- 使用 Windows 11 的 WSA（Windows Subsystem for Android）替代安卓模拟器
+
+### 快速诊断流程
+如果用户报告"WSL2 突然不能用"且近期安装过安卓模拟器：
+1. `bcdedit /enum | findstr hypervisor` → 如果是 `Off`，确认被模拟器关闭
+2. `wsl --status` → 检查是否提示虚拟机平台未启用
+3. 执行三条修复命令 + 重启

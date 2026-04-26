@@ -7,10 +7,14 @@ description: >
   (3) troubleshoot WSL2 service crashes caused by SIGTERM, systemd target stops, or distribution idle stops,
   (4) configure .wslconfig for persistent WSL2 instances,
   (5) debug "wsl.exe returns -1" or "SYSTEM account cannot run wsl.exe" errors in Task Scheduler,
-  (6) set up S4U (Service for User) scheduled tasks for WSL2 auto-start.
+  (6) set up S4U (Service for User) scheduled tasks for WSL2 auto-start,
+  (7) fix WSL2 broken by Android emulators (NoxPlayer, LDPlayer, etc.) that disable Hyper-V and VirtualMachinePlatform,
+  (8) diagnose "WSL2 not supported" errors after installing VirtualBox-based software.
   Trigger phrases: WSL保活, WSL自启动, WSL服务崩溃, systemd SIGTERM, WSL空闲停止,
   wsl.exe -1, 任务计划WSL, instanceIdleTimeout, vmIdleTimeout, WSL2开机启动,
-  WSL keep alive, WSL auto start, WSL service crash, WSL idle stop.
+  WSL keep alive, WSL auto start, WSL service crash, WSL idle stop,
+  安卓模拟器冲突, 夜神模拟器, NoxPlayer, Hyper-V被关闭, 虚拟机平台未启用,
+  WSL2突然不能用, bcdedit hypervisorlaunchtype.
 ---
 
 # WSL2 Service Keeper
@@ -29,6 +33,9 @@ WSL2 has a critical flaw for long-running services: it automatically stops idle 
 - User encounters `wsl.exe` returning `-1` from Scheduled Tasks
 - User needs to configure `.wslconfig` for persistent WSL2 instances
 - User asks about `instanceIdleTimeout` vs `vmIdleTimeout`
+- User reports WSL2 suddenly stopped working after installing Android emulator (NoxPlayer, LDPlayer, etc.)
+- User sees "当前计算机配置不支持 WSL2" or "Virtual Machine Platform is not enabled"
+- User's `bcdedit hypervisorlaunchtype` shows `Off` and they don't know why
 
 ## Core Knowledge: The Two-Layer Timeout Problem
 
@@ -45,14 +52,57 @@ WSL2 has **two independent** idle timeout mechanisms. **Both must be disabled** 
 
 ### Phase 1: Diagnose the Problem
 
-1. Check if the user's WSL2 service is dying due to idle timeout:
+1. **Check if WSL2 itself is functional** (do this FIRST):
+   - Run `wsl -d <distro> -- echo "test"` — if this fails, WSL2 is broken at the platform level
+   - Run `wsl --status` — look for "Virtual Machine Platform is not enabled" or similar errors
+   - Run `bcdedit /enum | findstr hypervisor` (needs admin) — if `hypervisorlaunchtype` is `Off`, Hyper-V was disabled
+   - **Common cause**: Android emulators (NoxPlayer, LDPlayer, MuMu, etc.) disable Hyper-V and VirtualMachinePlatform on install
+   - If WSL2 platform is broken, skip to **Phase 1.5: Fix Virtualization** below
+
+2. Check if the user's WSL2 service is dying due to idle timeout:
    - Run `wsl -d <distro> -- systemctl --user status <service>` to see if service is inactive
    - Check `wsl -d <distro> -- journalctl --user -u <service> --no-pager -n 50` for SIGTERM signals
    - If SIGTERM appears and `default.target` is stopped, this is the idle timeout problem
 
-2. Check current `.wslconfig`:
+3. Check current `.wslconfig`:
    - Read `C:\Users\<username>\.wslconfig` (or the equivalent path)
    - Verify both `instanceIdleTimeout=-1` and `vmIdleTimeout=-1` are present
+
+### Phase 1.5: Fix Virtualization (Android Emulator Conflict)
+
+If Phase 1 step 1 reveals that WSL2 itself is broken (hypervisorlaunchtype=Off, VirtualMachinePlatform disabled):
+
+**Root cause**: VirtualBox/QEMU-based Android emulators (NoxPlayer, LDPlayer, Xiaoyao, BlueStacks 4-) disable Hyper-V and virtualization components on install. Uninstalling the emulator does NOT restore these settings.
+
+**Fix** (all commands require admin/elevated PowerShell):
+
+```powershell
+# 1. Restore Hyper-V launch type
+bcdedit /set hypervisorlaunchtype auto
+
+# 2. Re-enable Virtual Machine Platform
+dism /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart
+
+# 3. Re-enable WSL
+dism /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart
+```
+
+**Then restart the computer.** After restart, WSL2 should work again. Continue with Phase 2.
+
+**Quick diagnostic shortcut**: If the user mentions recently installing an Android emulator, go directly to the three fix commands above.
+
+**Emulator compatibility reference**:
+
+| Emulator | Hyper-V Compatible | Impact on WSL2 |
+|---|---|---|
+| NoxPlayer (夜神) | ❌ No | Breaks WSL2 completely |
+| LDPlayer (雷电) 旧版 | ❌ No | Breaks WSL2 completely |
+| Xiaoyao (逍遥) | ❌ No | Breaks WSL2 completely |
+| BlueStacks 4- | ❌ No | Breaks WSL2 completely |
+| MuMu Pro | ✅ Yes | Coexists with WSL2 |
+| LDPlayer 9 (Hyper-V) | ✅ Yes | Coexists with WSL2 |
+| BlueStacks 5+ (Hyper-V) | ✅ Yes | Coexists with WSL2 |
+| Windows Subsystem for Android | ✅ Yes | Coexists with WSL2 |
 
 ### Phase 2: Fix Idle Timeout (Keep Services Alive)
 
@@ -158,7 +208,7 @@ python scripts/diagnose.py [--distro <distro>] [--service <name>]
 
 ## References
 
-- `references/pitfalls.md` — Complete list of 8+ known pitfalls with WSL2 services, symptoms, and solutions
+- `references/pitfalls.md` — Complete list of 11 known pitfalls with WSL2 services, symptoms, and solutions
 - `references/wslconfig-reference.md` — Full `.wslconfig` configuration reference with explanations
 
 ## Anti-Patterns to Avoid
@@ -170,3 +220,4 @@ python scripts/diagnose.py [--distro <distro>] [--service <name>]
 5. **Only setting `vmIdleTimeout`** — this keeps the VM alive but the distro still stops; `instanceIdleTimeout` is the critical setting
 6. **Using `loginctl enable-linger` alone** — insufficient in WSL2; the distro stop event overrides linger
 7. **Ignoring CRLF in bash scripts** — scripts edited on Windows silently fail due to `\r` characters
+8. **Installing VirtualBox-based Android emulators alongside WSL2** — NoxPlayer, LDPlayer, Xiaoyao, etc. disable Hyper-V and VirtualMachinePlatform; uninstalling the emulator does NOT restore these settings; use Hyper-V compatible alternatives instead

@@ -16,6 +16,7 @@ WSL2 has a critical flaw for long-running services: it **automatically stops idl
 - `vmIdleTimeout=-1` is set but services still get killed
 - Windows Scheduled Task runs `wsl.exe` but returns `-1`
 - Your laptop kills WSL when you unplug the charger
+- WSL2 suddenly stopped working after installing an Android emulator
 
 ## Quick Fix
 
@@ -63,6 +64,28 @@ Register-ScheduledTask -TaskName "WSL-AutoStart" -Principal $principal -Action $
 
 > **Why S4U?** SYSTEM account **cannot** run `wsl.exe` — it silently returns `-1`.
 
+## Android Emulator Conflict 🚨
+
+VirtualBox/QEMU-based Android emulators (NoxPlayer, LDPlayer, Xiaoyao, BlueStacks 4-) **break WSL2 completely** by disabling Hyper-V and VirtualMachinePlatform. Uninstalling the emulator does **NOT** restore these settings.
+
+**Quick fix** (run in elevated PowerShell, then restart):
+
+```powershell
+bcdedit /set hypervisorlaunchtype auto
+dism /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart
+dism /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart
+```
+
+| Emulator | Hyper-V Compatible |
+|---|---|
+| NoxPlayer (夜神) | ❌ Breaks WSL2 |
+| LDPlayer (雷电) 旧版 | ❌ Breaks WSL2 |
+| Xiaoyao (逍遥) | ❌ Breaks WSL2 |
+| BlueStacks 4- | ❌ Breaks WSL2 |
+| MuMu Pro | ✅ Coexists |
+| LDPlayer 9 (Hyper-V) | ✅ Coexists |
+| BlueStacks 5+ (Hyper-V) | ✅ Coexists |
+
 ## Install as WorkBuddy Skill
 
 1. Download or clone this repo
@@ -81,7 +104,7 @@ cp -r wsl2-service-keeper ~/.workbuddy/skills/
 |--------|-------------|
 | `scripts/create_startup_script.py` | Generate a WSL startup script with service check and keep-alive |
 | `scripts/register_autostart.py` | Generate a PowerShell script to register a Scheduled Task |
-| `scripts/diagnose.py` | Diagnose WSL2 service issues: .wslconfig, service status, CRLF, task config |
+| `scripts/diagnose.py` | Diagnose WSL2 service issues: virtualization status, .wslconfig, service status, CRLF, task config |
 
 ### Usage Examples
 
@@ -98,7 +121,7 @@ python scripts/diagnose.py --distro Ubuntu-22.04 --service my-api --task-name My
 
 ## Pitfalls Reference
 
-Full list of [10 known pitfalls](references/pitfalls.md) with symptoms, root causes, and solutions.
+Full list of [11 known pitfalls](references/pitfalls.md) with symptoms, root causes, and solutions.
 
 | # | Pitfall | Key Lesson |
 |---|---------|------------|
@@ -112,6 +135,7 @@ Full list of [10 known pitfalls](references/pitfalls.md) with symptoms, root cau
 | 8 | RunAs output lost | Use separate .ps1 file, not inline |
 | 9 | Missing `sleep infinity` | WSL may stop even with idle timeout disabled |
 | 10 | `[TimeSpan]::Zero` XML error | Use string `'PT0S'` instead |
+| 11 | Android emulator breaks WSL2 | Fix `bcdedit` + re-enable VirtualMachinePlatform + WSL component |
 
 ## Compatibility
 
